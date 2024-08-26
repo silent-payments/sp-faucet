@@ -25,6 +25,7 @@ use sp_client::spclient::Recipient;
 use anyhow::{Error, Result};
 
 use crate::lock_freezed_utxos;
+use crate::message::ADDRESSCACHE;
 use crate::{scan::compute_partial_tweak_to_transaction, MutexExt, DAEMON, WALLET};
 use crate::silentpayments::create_transaction;
 
@@ -267,6 +268,10 @@ pub fn handle_faucet_request(faucet_request: &FaucetMessage) -> Result<FaucetRes
     log::debug!("Sending {} sats to {}", amount, sp_address);
     // send bootstrap coins to this sp_address
     let tx = faucet_send(sp_address, amount)?;
+
+    // Now that we're sure the tx is off, we add the address to the temporary black list
+    let address_cache = ADDRESSCACHE.get().unwrap();
+    address_cache.insert(sp_address.into());
 
     // get the tweak
     let partial_tweak = compute_partial_tweak_to_transaction(&tx)?;

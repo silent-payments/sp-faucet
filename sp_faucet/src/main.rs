@@ -14,7 +14,7 @@ use bitcoincore_rpc::{bitcoin::OutPoint, json::{self as bitcoin_json}};
 use faucet::FaucetResponse;
 use futures_util::{future, pin_mut, stream::TryStreamExt, FutureExt, StreamExt};
 use log::{debug, error, warn};
-use message::{broadcast_message, process_message, BroadcastType, MessageCache, MESSAGECACHE};
+use message::{broadcast_message, process_message, BroadcastType, AddressCache, ADDRESSCACHE};
 use scan::compute_partial_tweak_to_transaction;
 use sp_client::bitcoin::{
     consensus::deserialize,
@@ -276,8 +276,8 @@ async fn main() -> Result<()> {
         warn!("Running on mainnet, you're on your own");
     }
 
-    MESSAGECACHE
-        .set(MessageCache::new())
+    ADDRESSCACHE
+        .set(AddressCache::new())
         .expect("Message Cache initialization failed");
 
     PEERMAP
@@ -371,7 +371,7 @@ async fn main() -> Result<()> {
     let try_socket = TcpListener::bind(config.ws_url).await;
     let listener = try_socket.expect("Failed to bind");
 
-    tokio::spawn(MessageCache::clean_up());
+    tokio::spawn(AddressCache::clean_up());
 
     // Let's spawn the handling of each connection in a separate task.
     while let Ok((stream, addr)) = listener.accept().await {

@@ -10,37 +10,37 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::{faucet::{handle_faucet_request, FaucetMessage, FaucetResponse}, PEERMAP};
 
-pub(crate) static MESSAGECACHE: OnceLock<MessageCache> = OnceLock::new();
+pub(crate) static ADDRESSCACHE: OnceLock<AddressCache> = OnceLock::new();
 
-const MESSAGECACHEDURATION: Duration = Duration::from_secs(10);
-const MESSAGECACHEINTERVAL: Duration = Duration::from_secs(2);
+const ADDRESSCACHEDURATION: Duration = Duration::from_secs(600);
+const ADDRESSCACHEINTERVAL: Duration = Duration::from_secs(20);
 
 #[derive(Debug)]
-pub(crate) struct MessageCache {
+pub(crate) struct AddressCache {
     store: Mutex<HashMap<String, Instant>>,
 }
 
-impl MessageCache {
+impl AddressCache {
     pub fn new() -> Self {
         Self {
             store: Mutex::new(HashMap::new()),
         }
     }
 
-    fn insert(&self, key: String) {
+    pub fn insert(&self, key: String) {
         let mut store = self.store.lock().unwrap();
         store.insert(key.clone(), Instant::now());
     }
 
-    fn contains(&self, key: &str) -> bool {
+    pub fn contains(&self, key: &str) -> bool {
         let store = self.store.lock().unwrap();
         store.contains_key(key)
     }
 
     pub async fn clean_up() {
-        let cache = MESSAGECACHE.get().unwrap();
+        let cache = ADDRESSCACHE.get().unwrap();
 
-        let mut interval = time::interval(MESSAGECACHEINTERVAL);
+        let mut interval = time::interval(ADDRESSCACHEINTERVAL);
 
         loop {
             interval.tick().await;
@@ -52,7 +52,7 @@ impl MessageCache {
                 .iter()
                 .filter_map(|(entry, entrytime)| {
                     if let Some(duration) = now.checked_duration_since(*entrytime) {
-                        if duration > MESSAGECACHEDURATION {
+                        if duration > ADDRESSCACHEDURATION {
                             Some(entry.clone())
                         } else {
                             None
@@ -122,6 +122,11 @@ pub(crate) fn broadcast_message(
 pub fn process_message(raw_msg: &str) -> Result<FaucetResponse> {
     log::debug!("Received msg: {}", raw_msg);
     if let Ok(content) = serde_json::from_str::<FaucetMessage>(raw_msg) {
+        // Check if the address is black listed
+        let address_cache = ADDRESSCACHE.get().unwrap();
+        if address_cache.contains(&content.sp_address) {
+            return Err(Error::msg("Already sent tokens to this address, please wait"));
+        }
         match handle_faucet_request(&content) {
             Ok(faucet_response) => {
                 Ok(faucet_response)
