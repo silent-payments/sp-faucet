@@ -28,8 +28,8 @@ use crate::lock_freezed_utxos;
 use crate::{scan::compute_partial_tweak_to_transaction, MutexExt, DAEMON, WALLET};
 use crate::silentpayments::create_transaction;
 
-const MIN_AMOUNT: Amount = Amount::from_sat(100_000);
-const MAX_AMOUNT: Amount = Amount::from_sat(1_000_000);
+const MIN_AMOUNT: Amount = Amount::from_sat(10_000);
+const MAX_AMOUNT: Amount = Amount::from_sat(100_000);
 const FEE_PROVISION: Amount = Amount::from_sat(10_000);
 
 #[derive(Debug, Serialize, Deserialize)]

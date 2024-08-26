@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bitcoin Silent-Payment Faucet</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 2rem;
+        }
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 1rem;
+        }
+        form {
+            display: inline-block;
+            margin-top: 1rem;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+        }
+        input[type="text"], input[type="number"] {
+            width: 100%;
+            padding: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        input[type="submit"] {
+            background-color: #4CAF50;
+            color: white;
+            padding: 0.5rem 1rem;
+            border: none;
+            cursor: pointer;
+        }
+        input[type="submit"]:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <h1>Silent Payment Faucet</h1>
+    <form id="claimForm">
+        <label for="address">Silent Payment Address:</label>
+        <input type="text" id="address" name="address" placeholder="Enter your Bitcoin silent payment address" required>
+
+        <label for="amount">Amount (in satoshis):</label>
+        <input type="number" id="amount" name="amount" min="10000" max="100000" placeholder="Enter the amount" required>
+
+        <input type="submit" value="Claim Bitcoin">
+    </form>
+    <div id="errorMessage" style="display:none; color:red;"></div>
+    <script>
+        const claimForm = document.getElementById('claimForm');
+        const addressInput = document.getElementById('address');
+        const amountInput = document.getElementById('amount');
+        const errorMessage = document.getElementById('errorMessage');
+
+        const ws = new WebSocket('ws:localhost:8090');
+
+        ws.addEventListener('open', (event) => {
+            console.log('WebSocket connection established:', event);
+        });
+
+        ws.addEventListener('message', (event) => {
+            console.log('Received message from server:', event.data);
+            // Handle the response from the server here
+        });
+
+        ws.addEventListener('close', (event) => {
+            console.log('WebSocket connection closed:', event);
+        });
+
+        claimForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+            const sp_address = addressInput.value;
+            const amount = amountInput.value;
+
+            // Check if the amount value can be parsed as fdn integer
+            const amountInt = Number(amount);
+            if (!Number.isInteger(amountInt)) {
+                errorMessage.innerText = 'The amount value must be a valid integer.';
+                errorMessage.style.display = 'block';
+                return;
+            }
+
+            // Send the claim request to the server
+            const claimData = {
+                sp_address,
+                amount: amountInt
+            };
+            ws.send(JSON.stringify(claimData, (key, value) => {
+                if (key === 'amount' && !Number.isInteger(value)) {
+                    return null;
+                }
+                return value;
+            }));
+
+            // Clear the error message
+            errorMessage.innerText = '';
+            errorMessage.style.display = 'none';
+        });
+    </script>
+</body>
+</html>
