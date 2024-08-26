@@ -8,7 +8,7 @@ use std::{
 use tokio::time;
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::{faucet::{handle_faucet_request, FaucetMessage}, PEERMAP};
+use crate::{faucet::{handle_faucet_request, FaucetMessage, FaucetResponse}, PEERMAP};
 
 pub(crate) static MESSAGECACHE: OnceLock<MessageCache> = OnceLock::new();
 
@@ -119,28 +119,18 @@ pub(crate) fn broadcast_message(
     Ok(())
 }
 
-pub fn process_message(raw_msg: &str, addr: SocketAddr) {
+pub fn process_message(raw_msg: &str) -> Result<FaucetResponse> {
     log::debug!("Received msg: {}", raw_msg);
-    let cache = MESSAGECACHE.get().expect("Cache should be initialized");
-    if cache.contains(raw_msg) {
-        log::debug!("Message already processed, dropping");
-        return;
-    } else {
-        cache.insert(raw_msg.to_owned());
-    }
     if let Ok(content) = serde_json::from_str::<FaucetMessage>(raw_msg) {
         match handle_faucet_request(&content) {
             Ok(faucet_response) => {
-                log::debug!(
-                    "Obtained faucet_response: {}",
-                    serde_json::to_string(&faucet_response).unwrap()
-                );
+                Ok(faucet_response)
             }
             Err(e) => {
-                log::error!("Failed to send faucet tx: {}", e);
+                Err(Error::msg(format!("Failed to send faucet tx: {}", e)))
             }
         }
     } else {
-        log::error!("Invalid content for faucet message");
+        Err(Error::msg("Invalid content for faucet message"))
     }
 }

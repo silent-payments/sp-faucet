@@ -173,7 +173,18 @@ async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
     let broadcast_incoming = incoming.try_for_each(|msg| {
         if let Ok(raw_msg) = msg.to_text() {
             debug!("Received msg: {}", raw_msg);
-            process_message(raw_msg, addr);
+            match process_message(raw_msg) {
+                Ok(result) => {
+                    if let Err(e) = broadcast_message(serde_json::to_string(&result).unwrap(), BroadcastType::Sender(addr)) {
+                        log::error!("{}", e.to_string());
+                    }
+                }
+                Err(e) => {
+                    if let Err(e) = broadcast_message(e.to_string(), BroadcastType::Sender(addr)) {
+                        log::error!("{}", e.to_string());
+                    }
+                }
+            }
         } else {
             debug!("Received non-text message {} from peer {}", msg, addr);
         }
@@ -214,7 +225,6 @@ async fn handle_zmq(zmq_url: String, electrum_url: String) {
     debug!("Starting listening on Core");
     let mut socket = zeromq::SubSocket::new();
     socket.connect(&zmq_url).await.unwrap();
-    socket.subscribe("rawtx").await.unwrap();
     socket.subscribe("hashblock").await.unwrap();
     loop {
         let core_msg = match socket.recv().await {
@@ -230,16 +240,6 @@ async fn handle_zmq(zmq_url: String, electrum_url: String) {
         {
             debug!("topic: {}", std::str::from_utf8(&topic).unwrap());
             match std::str::from_utf8(&topic) {
-                Ok("rawtx") => match create_new_tx_message(data.to_vec()) {
-                    Ok(m) => {
-                        debug!("Created message");
-                        serde_json::to_string(&m).expect("This shouldn't fail")
-                    }
-                    Err(e) => {
-                        error!("{}", e);
-                        continue;
-                    }
-                },
                 Ok("hashblock") => match scan_blocks(0, &electrum_url) {
                     Ok(_) => continue,
                     Err(e) => {
