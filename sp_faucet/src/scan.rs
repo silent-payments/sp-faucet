@@ -1,23 +1,20 @@
 use std::collections::HashMap;
-use std::str::FromStr;
 
 use anyhow::{Error, Result};
-use electrum_client::ElectrumApi;
 use hex::FromHex;
 use sp_client::bitcoin::bip158::BlockFilter;
 use sp_client::bitcoin::hex::DisplayHex;
 use sp_client::bitcoin::secp256k1::{All, PublicKey, Scalar, Secp256k1, SecretKey};
 use sp_client::bitcoin::{BlockHash, OutPoint, Transaction, TxOut, XOnlyPublicKey};
 use sp_client::silentpayments::receiving::Receiver;
-use sp_client::silentpayments::utils::receiving::{
-    calculate_tweak_data, get_pubkey_from_input,
-};
+use sp_client::silentpayments::utils::receiving::{calculate_tweak_data, get_pubkey_from_input};
 use sp_client::spclient::{OutputSpendStatus, OwnedOutput};
 use tokio::time::Instant;
 
-use crate::{electrumclient, MutexExt, DAEMON, WALLET};
+use crate::blindbit::client::BlindbitClient;
+use crate::{DAEMON, WALLET};
 
-pub fn compute_partial_tweak_to_transaction(tx: &Transaction) -> Result<PublicKey> {
+pub async fn compute_partial_tweak_to_transaction(tx: &Transaction) -> Result<PublicKey> {
     let daemon = DAEMON.get().ok_or(Error::msg("DAEMON not initialized"))?;
     let mut outpoints: Vec<(String, u32)> = Vec::with_capacity(tx.input.len());
     let mut pubkeys: Vec<PublicKey> = Vec::with_capacity(tx.input.len());
@@ -27,7 +24,8 @@ pub fn compute_partial_tweak_to_transaction(tx: &Transaction) -> Result<PublicKe
             input.previous_output.vout,
         ));
         let prev_tx = daemon
-            .lock_anyhow()?
+            .lock()
+            .await
             .get_transaction(&input.previous_output.txid, None)
             .map_err(|e| Error::msg(format!("Failed to find previous transaction: {}", e)))?;
 
@@ -58,17 +56,14 @@ pub fn compute_partial_tweak_to_transaction(tx: &Transaction) -> Result<PublicKe
 
 fn get_script_to_secret_map(
     sp_receiver: &Receiver,
-    tweak_data_vec: Vec<String>,
+    tweak_data_vec: Vec<PublicKey>,
     scan_key_scalar: Scalar,
     secp: &Secp256k1<All>,
 ) -> Result<HashMap<[u8; 34], PublicKey>> {
     let mut res = HashMap::new();
     let shared_secrets: Result<Vec<PublicKey>> = tweak_data_vec
         .into_iter()
-        .map(|s| {
-            let x = PublicKey::from_str(&s).map_err(Error::new)?;
-            x.mul_tweak(secp, &scan_key_scalar).map_err(Error::new)
-        })
+        .map(|x| x.mul_tweak(secp, &scan_key_scalar).map_err(Error::new))
         .collect();
     let shared_secrets = shared_secrets?;
 
@@ -212,16 +207,16 @@ fn scan_block_inputs(
     Ok(found)
 }
 
-pub fn scan_blocks(mut n_blocks_to_scan: u32, electrum_url: &str) -> anyhow::Result<()> {
+pub async fn scan_blocks(mut n_blocks_to_scan: u32, blindbit_url: &str) -> anyhow::Result<()> {
     log::info!("Starting a rescan");
-    let electrum_client = electrumclient::create_electrum_client(electrum_url)?;
 
     let sp_wallet = WALLET.get().ok_or(Error::msg("Wallet not initialized"))?;
 
     let core = DAEMON
         .get()
         .ok_or(Error::msg("DAEMON not initialized"))?
-        .lock_anyhow()?;
+        .lock()
+        .await;
 
     let secp = Secp256k1::new();
     let scan_height = sp_wallet.get_wallet()?.get_outputs().get_last_scan();
@@ -249,7 +244,7 @@ pub fn scan_blocks(mut n_blocks_to_scan: u32, electrum_url: &str) -> anyhow::Res
         filters.push(core.get_filters(blkheight)?);
     }
 
-    let mut tweak_data_map = electrum_client.sp_tweaks(start as usize)?;
+    let blindbit_client = BlindbitClient::new(blindbit_url.to_owned());
 
     let scan_sk = sp_wallet.get_wallet()?.get_client().get_scan_key();
 
@@ -257,11 +252,12 @@ pub fn scan_blocks(mut n_blocks_to_scan: u32, electrum_url: &str) -> anyhow::Res
     let start_time = Instant::now();
 
     for (blkheight, blkhash, blkfilter) in filters {
-        let spk2secret = match tweak_data_map.remove(&(&blkheight)) {
-            Some(tweak_data_vec) => {
-                get_script_to_secret_map(&sp_receiver, tweak_data_vec, scan_sk.into(), &secp)?
-            }
-            None => HashMap::new(),
+        let tweaks = blindbit_client.tweak_index(blkheight).await?;
+
+        let spk2secret = if tweaks.len() > 0 {
+            get_script_to_secret_map(&sp_receiver, tweaks, scan_sk.into(), &secp)?
+        } else {
+            HashMap::new()
         };
 
         // check if new possible outputs are payments to us

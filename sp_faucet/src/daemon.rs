@@ -5,6 +5,7 @@ use bitcoincore_rpc::json::{
     WalletCreateFundedPsbtOptions,
 };
 use bitcoincore_rpc::{json, jsonrpc, Auth, Client, RpcApi};
+use log::info;
 use sp_client::bitcoin::bip158::BlockFilter;
 use sp_client::bitcoin::{
     block, Address, Amount, Block, BlockHash, Network, OutPoint, Psbt, ScriptBuf, Sequence,
@@ -133,7 +134,10 @@ impl Daemon {
         // exit_flag: &ExitFlag,
         // metrics: &Metrics,
     ) -> Result<Self> {
+        let rpc_url = format!("{}/wallet/default", rpc_url);
         let mut rpc = rpc_connect(rpcwallet, network, rpc_url)?;
+
+        //rpc.load_wallet("default").unwrap();
 
         loop {
             match rpc_poll(&mut rpc, false) {

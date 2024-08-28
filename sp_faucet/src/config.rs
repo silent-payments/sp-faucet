@@ -13,7 +13,7 @@ pub struct Config {
     pub ws_url: String,
     pub wallet_name: String,
     pub network: Network,
-    pub electrum_url: String,
+    pub blindbit_url: String,
     pub zmq_url: String,
 }
 
@@ -62,9 +62,9 @@ impl Config {
                     .ok_or(Error::msg("no \"network\""))?
                     .trim_matches('\"'),
             )?,
-            electrum_url: file_content
-                .remove("electrum_url")
-                .ok_or(Error::msg("No \"electrum_url\""))?
+            blindbit_url: file_content
+                .remove("blindbit_url")
+                .ok_or(Error::msg("No \"blindbit_url\""))?
                 .to_owned(),
             zmq_url: file_content
                 .remove("zmq_url")

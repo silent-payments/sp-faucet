@@ -10,16 +10,16 @@ use std::{
     sync::{Mutex, MutexGuard, OnceLock},
 };
 
-use bitcoincore_rpc::{bitcoin::OutPoint, json::{self as bitcoin_json}};
+use bitcoincore_rpc::{
+    bitcoin::OutPoint,
+    json::{self as bitcoin_json},
+};
 use faucet::FaucetResponse;
 use futures_util::{future, pin_mut, stream::TryStreamExt, FutureExt, StreamExt};
 use log::{debug, error, warn};
-use message::{broadcast_message, process_message, BroadcastType, AddressCache, ADDRESSCACHE};
+use message::{broadcast_message, process_message, AddressCache, BroadcastType, ADDRESSCACHE};
 use scan::compute_partial_tweak_to_transaction;
-use sp_client::bitcoin::{
-    consensus::deserialize,
-    Amount, Network, Transaction,
-};
+use sp_client::bitcoin::{consensus::deserialize, Amount, Network, Transaction};
 use sp_client::{
     bitcoin::secp256k1::rand::{thread_rng, Rng},
     spclient::SpWallet,
@@ -34,9 +34,9 @@ use tokio_tungstenite::tungstenite::Message;
 use anyhow::{Error, Result};
 use zeromq::{Socket, SocketRecv};
 
+mod blindbit;
 mod config;
 mod daemon;
-mod electrumclient;
 mod faucet;
 mod message;
 mod scan;
@@ -51,7 +51,7 @@ type PeerMap = Mutex<HashMap<SocketAddr, Tx>>;
 
 pub(crate) static PEERMAP: OnceLock<PeerMap> = OnceLock::new();
 
-type SharedDaemon = Mutex<Daemon>;
+type SharedDaemon = tokio::sync::Mutex<Daemon>;
 
 pub(crate) static DAEMON: OnceLock<SharedDaemon> = OnceLock::new();
 
@@ -170,12 +170,15 @@ async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
 
     let (outgoing, incoming) = ws_stream.split();
 
-    let broadcast_incoming = incoming.try_for_each(|msg| {
+    let broadcast_incoming = incoming.try_for_each(|msg| async move {
         if let Ok(raw_msg) = msg.to_text() {
             debug!("Received msg: {}", raw_msg);
-            match process_message(raw_msg) {
+            match process_message(raw_msg).await {
                 Ok(result) => {
-                    if let Err(e) = broadcast_message(serde_json::to_string(&result).unwrap(), BroadcastType::Sender(addr)) {
+                    if let Err(e) = broadcast_message(
+                        serde_json::to_string(&result).unwrap(),
+                        BroadcastType::Sender(addr),
+                    ) {
                         log::error!("{}", e.to_string());
                     }
                 }
@@ -188,7 +191,7 @@ async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
         } else {
             debug!("Received non-text message {} from peer {}", msg, addr);
         }
-        future::ok(())
+        Ok(())
     });
 
     let receive_from_others = UnboundedReceiverStream::new(rx)
@@ -207,21 +210,18 @@ async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
     peers.lock().unwrap().remove(&addr);
 }
 
-fn create_new_tx_message(transaction: Vec<u8>) -> Result<FaucetResponse> {
+async fn create_new_tx_message(transaction: Vec<u8>) -> Result<FaucetResponse> {
     let tx: Transaction = deserialize(&transaction)?;
 
     if tx.is_coinbase() {
         return Err(Error::msg("Can't process coinbase transaction"));
     }
 
-    let partial_tweak = compute_partial_tweak_to_transaction(&tx)?;
-    Ok(FaucetResponse::new(
-        tx,
-        Some(partial_tweak),
-    ))
+    let partial_tweak = compute_partial_tweak_to_transaction(&tx).await?;
+    Ok(FaucetResponse::new(tx, Some(partial_tweak)))
 }
 
-async fn handle_zmq(zmq_url: String, electrum_url: String) {
+async fn handle_zmq(zmq_url: String, blindbit_url: String) {
     debug!("Starting listening on Core");
     let mut socket = zeromq::SubSocket::new();
     socket.connect(&zmq_url).await.unwrap();
@@ -240,8 +240,11 @@ async fn handle_zmq(zmq_url: String, electrum_url: String) {
         {
             debug!("topic: {}", std::str::from_utf8(&topic).unwrap());
             match std::str::from_utf8(&topic) {
-                Ok("hashblock") => match scan_blocks(0, &electrum_url) {
-                    Ok(_) => continue,
+                Ok("hashblock") => match scan_blocks(0, &blindbit_url).await {
+                    Ok(_) => {
+                        debug!("scanned blocks on zmq update");
+                        continue;
+                    }
                     Err(e) => {
                         error!("{}", e);
                         continue;
@@ -286,7 +289,7 @@ async fn main() -> Result<()> {
 
     // Connect the rpc daemon
     DAEMON
-        .set(Mutex::new(Daemon::connect(
+        .set(tokio::sync::Mutex::new(Daemon::connect(
             config.core_wallet,
             config.core_url,
             config.network,
@@ -296,7 +299,8 @@ async fn main() -> Result<()> {
     let current_tip: u32 = DAEMON
         .get()
         .unwrap()
-        .lock_anyhow()?
+        .lock()
+        .await
         .get_current_height()?
         .try_into()?;
 
@@ -361,11 +365,11 @@ async fn main() -> Result<()> {
 
     if last_scan < current_tip {
         log::info!("Scanning for our outputs");
-        scan_blocks(current_tip - last_scan, &config.electrum_url)?;
+        scan_blocks(current_tip - last_scan, &config.blindbit_url).await?;
     }
 
     // Subscribe to Bitcoin Core
-    tokio::spawn(handle_zmq(config.zmq_url, config.electrum_url));
+    tokio::spawn(handle_zmq(config.zmq_url, config.blindbit_url));
 
     // Create the event loop and TCP listener we'll accept connections on.
     let try_socket = TcpListener::bind(config.ws_url).await;

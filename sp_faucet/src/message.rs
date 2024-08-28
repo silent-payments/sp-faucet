@@ -8,7 +8,10 @@ use std::{
 use tokio::time;
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::{faucet::{handle_faucet_request, FaucetMessage, FaucetResponse}, PEERMAP};
+use crate::{
+    faucet::{handle_faucet_request, FaucetMessage, FaucetResponse},
+    PEERMAP,
+};
 
 pub(crate) static ADDRESSCACHE: OnceLock<AddressCache> = OnceLock::new();
 
@@ -78,10 +81,7 @@ pub(crate) enum BroadcastType {
     ToAll,
 }
 
-pub(crate) fn broadcast_message(
-    payload: String,
-    broadcast: BroadcastType,
-) -> Result<()> {
+pub(crate) fn broadcast_message(payload: String, broadcast: BroadcastType) -> Result<()> {
     let peers = PEERMAP.get().ok_or(Error::msg("Unitialized peer map"))?;
     let msg = Message::Text(serde_json::to_string(&payload)?);
     log::debug!("Broadcasting message: {}", msg);
@@ -119,21 +119,19 @@ pub(crate) fn broadcast_message(
     Ok(())
 }
 
-pub fn process_message(raw_msg: &str) -> Result<FaucetResponse> {
+pub async fn process_message(raw_msg: &str) -> Result<FaucetResponse> {
     log::debug!("Received msg: {}", raw_msg);
     if let Ok(content) = serde_json::from_str::<FaucetMessage>(raw_msg) {
         // Check if the address is black listed
         let address_cache = ADDRESSCACHE.get().unwrap();
         if address_cache.contains(&content.sp_address) {
-            return Err(Error::msg("Already sent tokens to this address, please wait"));
+            return Err(Error::msg(
+                "Already sent tokens to this address, please wait",
+            ));
         }
-        match handle_faucet_request(&content) {
-            Ok(faucet_response) => {
-                Ok(faucet_response)
-            }
-            Err(e) => {
-                Err(Error::msg(format!("Failed to send faucet tx: {}", e)))
-            }
+        match handle_faucet_request(&content).await {
+            Ok(faucet_response) => Ok(faucet_response),
+            Err(e) => Err(Error::msg(format!("Failed to send faucet tx: {}", e))),
         }
     } else {
         Err(Error::msg("Invalid content for faucet message"))

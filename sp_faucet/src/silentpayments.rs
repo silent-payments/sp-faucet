@@ -3,9 +3,9 @@ use std::str::FromStr;
 
 use anyhow::{Error, Result};
 
-use sp_client::bitcoin::secp256k1::rand::{thread_rng, Rng};
 use sp_client::bitcoin::consensus::deserialize;
 use sp_client::bitcoin::psbt::raw;
+use sp_client::bitcoin::secp256k1::rand::{thread_rng, Rng};
 use sp_client::bitcoin::Psbt;
 use sp_client::bitcoin::{Amount, OutPoint};
 use sp_client::constants::{
@@ -28,9 +28,7 @@ pub fn create_transaction(
         .to_spendable_list()
         // filter out freezed utxos
         .into_iter()
-        .filter(|(outpoint, _)| {
-            !freezed_utxos.contains(outpoint)
-        })
+        .filter(|(outpoint, _)| !freezed_utxos.contains(outpoint))
         .collect();
 
     // if we have a payload, it means we are notifying, so let's add a revokation output
@@ -38,13 +36,17 @@ pub fn create_transaction(
         recipients.push(Recipient {
             address: sp_wallet.get_client().get_receiving_address(),
             amount: DUST_THRESHOLD,
-            nb_outputs: 1
+            nb_outputs: 1,
         })
     }
 
-    let sum_outputs = recipients.iter().fold(Amount::from_sat(0), |acc, x| acc + x.amount);
+    let sum_outputs = recipients
+        .iter()
+        .fold(Amount::from_sat(0), |acc, x| acc + x.amount);
 
-    let zero_value_recipient = recipients.iter_mut().find(|r| r.amount == Amount::from_sat(0));
+    let zero_value_recipient = recipients
+        .iter_mut()
+        .find(|r| r.amount == Amount::from_sat(0));
 
     let mut inputs: HashMap<OutPoint, OwnedOutput> = HashMap::new();
     let mut total_available = Amount::from_sat(0);
@@ -90,7 +92,8 @@ pub fn create_transaction(
     if let Some(address) = fee_payer {
         SpClient::set_fees(&mut new_psbt, fee_rate, address)?;
     } else {
-        let candidates: Vec<Option<String>> = new_psbt.outputs
+        let candidates: Vec<Option<String>> = new_psbt
+            .outputs
             .iter()
             .map(|o| {
                 if let Some(value) = o.proprietary.get(&raw::ProprietaryKey {
@@ -113,17 +116,17 @@ pub fn create_transaction(
         for candidate in candidates {
             if let Some(c) = candidate {
                 if c == change_address {
-                    SpClient::set_fees(&mut new_psbt, fee_rate, change_address.clone())?; 
+                    SpClient::set_fees(&mut new_psbt, fee_rate, change_address.clone())?;
                     fee_set = true;
                     break;
                 } else if c == sender_address {
-                    SpClient::set_fees(&mut new_psbt, fee_rate, sender_address.clone())?; 
+                    SpClient::set_fees(&mut new_psbt, fee_rate, sender_address.clone())?;
                     fee_set = true;
                     break;
                 }
             }
         }
-     
+
         if !fee_set {
             return Err(Error::msg("Must specify payer for fee"));
         }

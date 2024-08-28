@@ -2,7 +2,8 @@ use std::{collections::HashMap, str::FromStr};
 
 use bitcoincore_rpc::json::{self as bitcoin_json};
 use bitcoincore_rpc::RawTx;
-use serde::{Serialize, Deserialize};
+use log::info;
+use serde::{Deserialize, Serialize};
 use sp_client::bitcoin::secp256k1::PublicKey;
 use sp_client::bitcoin::secp256k1::{
     rand::thread_rng, Keypair, Message as Secp256k1Message, Secp256k1, ThirtyTwoByteHash,
@@ -26,8 +27,8 @@ use anyhow::{Error, Result};
 
 use crate::lock_freezed_utxos;
 use crate::message::ADDRESSCACHE;
-use crate::{scan::compute_partial_tweak_to_transaction, MutexExt, DAEMON, WALLET};
 use crate::silentpayments::create_transaction;
+use crate::{scan::compute_partial_tweak_to_transaction, MutexExt, DAEMON, WALLET};
 
 const MIN_AMOUNT: Amount = Amount::from_sat(10_000);
 const MAX_AMOUNT: Amount = Amount::from_sat(100_000);
@@ -46,7 +47,7 @@ pub struct FaucetResponse {
 }
 
 impl FaucetResponse {
-    pub fn new(transaction: Transaction, tweak_data: Option<PublicKey>) -> Self { 
+    pub fn new(transaction: Transaction, tweak_data: Option<PublicKey>) -> Self {
         Self {
             transaction: transaction.raw_hex(),
             tweak_data: tweak_data.map(|p| p.to_string()),
@@ -54,13 +55,13 @@ impl FaucetResponse {
     }
 }
 
-fn spend_from_core(dest: XOnlyPublicKey, amt: Amount) -> Result<(Transaction, Amount)> {
+async fn spend_from_core(dest: XOnlyPublicKey, amt: Amount) -> Result<(Transaction, Amount)> {
     let core = DAEMON
         .get()
         .ok_or(Error::msg("DAEMON not initialized"))?
-        .lock_anyhow()?;
-    let unspent_list: Vec<bitcoin_json::ListUnspentResultEntry> =
-        core.list_unspent_min_sum(amt)?;
+        .lock()
+        .await;
+    let unspent_list: Vec<bitcoin_json::ListUnspentResultEntry> = core.list_unspent_min_sum(amt)?;
 
     if !unspent_list.is_empty() {
         let network = core.get_network()?;
@@ -84,7 +85,7 @@ fn spend_from_core(dest: XOnlyPublicKey, amt: Amount) -> Result<(Transaction, Am
     }
 }
 
-fn faucet_send(sp_address: SilentPaymentAddress, amount: Amount) -> Result<Transaction> {
+async fn faucet_send(sp_address: SilentPaymentAddress, amount: Amount) -> Result<Transaction> {
     let mut first_tx: Option<Transaction> = None;
     let final_tx: Transaction;
 
@@ -120,7 +121,8 @@ fn faucet_send(sp_address: SilentPaymentAddress, amount: Amount) -> Result<Trans
         let fee_estimate = DAEMON
             .get()
             .ok_or(Error::msg("DAEMON not initialized"))?
-            .lock_anyhow()?
+            .lock()
+            .await
             .estimate_fee(6)
             .unwrap_or(Amount::from_sat(1000))
             .checked_div(1000)
@@ -149,7 +151,11 @@ fn faucet_send(sp_address: SilentPaymentAddress, amount: Amount) -> Result<Trans
         let keypair = Keypair::new(&secp, &mut thread_rng());
 
         // we first spend from core to the pubkey we just created
-        let (core_tx, fee_rate) = spend_from_core(keypair.x_only_public_key().0, MAX_AMOUNT.checked_mul(4).expect("This shouldn't overflow"))?;
+        let (core_tx, fee_rate) = spend_from_core(
+            keypair.x_only_public_key().0,
+            MAX_AMOUNT.checked_mul(4).expect("This shouldn't overflow"),
+        )
+        .await?;
 
         // check that the first output of the transaction pays to the key we just created
         debug_assert!(
@@ -178,14 +184,18 @@ fn faucet_send(sp_address: SilentPaymentAddress, amount: Amount) -> Result<Trans
         )?;
 
         let our_sp_address = sp_wallet.get_wallet()?.get_client().get_receiving_address();
-        let output_keys =
-            generate_recipient_pubkeys(vec![sp_address.into(), our_sp_address.clone()], partial_secret)?;
+        let output_keys = generate_recipient_pubkeys(
+            vec![sp_address.into(), our_sp_address.clone()],
+            partial_secret,
+        )?;
 
-        let ext_output_key = output_keys.get::<String>(&sp_address.into())
+        let ext_output_key = output_keys
+            .get::<String>(&sp_address.into())
             .expect("Failed to generate keys")
             .get(0)
             .expect("Failed to generate keys");
-        let our_output_key = output_keys.get(&our_sp_address)
+        let our_output_key = output_keys
+            .get(&our_sp_address)
             .expect("Failed to generate keys")
             .get(0)
             .expect("Failed to generate keys");
@@ -246,7 +256,8 @@ fn faucet_send(sp_address: SilentPaymentAddress, amount: Amount) -> Result<Trans
         let daemon = DAEMON
             .get()
             .ok_or(Error::msg("DAEMON not initialized"))?
-            .lock_anyhow()?;
+            .lock()
+            .await;
         // broadcast one or two transactions
         if first_tx.is_some() {
             daemon.broadcast(&first_tx.unwrap())?;
@@ -258,28 +269,31 @@ fn faucet_send(sp_address: SilentPaymentAddress, amount: Amount) -> Result<Trans
     Ok(final_tx)
 }
 
-pub fn handle_faucet_request(faucet_request: &FaucetMessage) -> Result<FaucetResponse> {
+pub async fn handle_faucet_request(faucet_request: &FaucetMessage) -> Result<FaucetResponse> {
     let sp_address = SilentPaymentAddress::try_from(faucet_request.sp_address.as_str())?;
     let amount = Amount::from_sat(faucet_request.amount.into());
     if amount < MIN_AMOUNT || amount > MAX_AMOUNT {
-        return Err(Error::msg("amount must be comprised between 100,000 and 1,000,000 sats included"));
+        return Err(Error::msg(
+            "amount must be comprised between 100,000 and 1,000,000 sats included",
+        ));
     }
     log::debug!("Sending {} sats to {}", amount, sp_address);
     // send bootstrap coins to this sp_address
-    let tx = faucet_send(sp_address, amount)?;
+    let tx = faucet_send(sp_address, amount).await?;
 
     // Now that we're sure the tx is off, we add the address to the temporary black list
     let address_cache = ADDRESSCACHE.get().unwrap();
     address_cache.insert(sp_address.into());
 
     // get the tweak
-    let partial_tweak = compute_partial_tweak_to_transaction(&tx)?;
+    let partial_tweak = compute_partial_tweak_to_transaction(&tx).await?;
 
     // get current blockheight
     let blkheight: u32 = DAEMON
         .get()
         .unwrap()
-        .lock_anyhow()?
+        .lock()
+        .await
         .get_current_height()?
         .try_into()?;
 
@@ -295,8 +309,5 @@ pub fn handle_faucet_request(faucet_request: &FaucetMessage) -> Result<FaucetRes
     sp_wallet.save()?;
 
     log::debug!("saved the wallet");
-    Ok(FaucetResponse::new(
-        tx,
-        Some(partial_tweak)
-    ))
+    Ok(FaucetResponse::new(tx, Some(partial_tweak)))
 }
