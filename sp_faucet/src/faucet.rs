@@ -96,10 +96,9 @@ fn faucet_send(sp_address: SilentPaymentAddress, amount: Amount) -> Result<Trans
         .iter()
         .fold(Amount::from_sat(0), |acc, (_, x)| acc + x.amount);
 
-    let expected_reserve = amount.checked_mul(2).expect("This shouldn't overflow");
-    let amt_to_send = amount.checked_add(FEE_PROVISION).expect("This shouldn't overflow");
+    let expected_reserve = amount.checked_add(FEE_PROVISION).expect("This shouldn't overflow");
 
-    // We take found out of Core if we have less than twice the amount requested left
+    // We take funds out of Core if we have less than the amount requested + 10k sats
     // This is kinda arbitrary
     if available_amt > expected_reserve {
         let mut total_amt = Amount::from_sat(0);
@@ -107,14 +106,14 @@ fn faucet_send(sp_address: SilentPaymentAddress, amount: Amount) -> Result<Trans
         for (outpoint, output) in available_outpoints {
             total_amt += output.amount;
             inputs.insert(outpoint, output);
-            if total_amt >= amt_to_send {
+            if total_amt >= amount {
                 break;
             }
         }
 
         let recipient = Recipient {
             address: sp_address.into(),
-            amount: amt_to_send,
+            amount,
             nb_outputs: 1,
         };
 
@@ -140,7 +139,7 @@ fn faucet_send(sp_address: SilentPaymentAddress, amount: Amount) -> Result<Trans
             vec![recipient],
             None,
             fee_estimate,
-            None
+            Some(wallet.get_client().sp_receiver.get_change_address())
         )?;
 
         final_tx = signed_psbt.extract_tx()?;
@@ -199,10 +198,10 @@ fn faucet_send(sp_address: SilentPaymentAddress, amount: Amount) -> Result<Trans
             return Err(Error::msg("Not enough funds"));
         }
 
-        let change_amt = core_tx.output[0].value.checked_sub(amt_to_send).unwrap();
+        let change_amt = core_tx.output[0].value.checked_sub(amount).unwrap();
 
         faucet_tx.output.push(TxOut {
-            value: amt_to_send,
+            value: amount,
             script_pubkey: ext_spk,
         });
         faucet_tx.output.push(TxOut {
