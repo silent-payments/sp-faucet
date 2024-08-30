@@ -76,9 +76,6 @@ impl WalletFile {
     fn create(&self) -> Result<()> {
         let parent: PathBuf;
         if let Some(dir) = self.path.parent() {
-            if !dir.ends_with(".4nk") {
-                return Err(Error::msg("parent dir must be \".4nk\""));
-            }
             parent = dir.to_path_buf();
         } else {
             return Err(Error::msg("wallet file has no parent dir"));
@@ -305,7 +302,7 @@ async fn main() -> Result<()> {
         .try_into()?;
 
     let mut app_dir = PathBuf::from_str(&env::var("HOME")?)?;
-    app_dir.push(".4nk");
+    app_dir.push(".sp-faucet");
     let mut wallet_file = app_dir.clone();
     wallet_file.push(&config.wallet_name);
 
