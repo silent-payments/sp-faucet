@@ -83,7 +83,7 @@ pub(crate) enum BroadcastType {
 
 pub(crate) fn broadcast_message(payload: String, broadcast: BroadcastType) -> Result<()> {
     let peers = PEERMAP.get().ok_or(Error::msg("Unitialized peer map"))?;
-    let msg = Message::Text(serde_json::to_string(&payload)?);
+    let msg = Message::Text(payload);
     log::debug!("Broadcasting message: {}", msg);
     match broadcast {
         BroadcastType::Sender(addr) => {
