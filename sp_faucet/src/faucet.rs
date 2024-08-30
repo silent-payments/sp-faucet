@@ -43,6 +43,7 @@ pub struct FaucetMessage {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FaucetResponse {
     pub transaction: String,
+    pub txid: String,
     pub tweak_data: Option<String>,
 }
 
@@ -50,6 +51,7 @@ impl FaucetResponse {
     pub fn new(transaction: Transaction, tweak_data: Option<PublicKey>) -> Self {
         Self {
             transaction: transaction.raw_hex(),
+            txid: transaction.txid().to_string(),
             tweak_data: tweak_data.map(|p| p.to_string()),
         }
     }
