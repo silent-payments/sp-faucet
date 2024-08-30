@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use anyhow::{Error, Result};
 use hex::FromHex;
@@ -9,7 +10,7 @@ use sp_client::bitcoin::{BlockHash, OutPoint, Transaction, TxOut, XOnlyPublicKey
 use sp_client::silentpayments::receiving::Receiver;
 use sp_client::silentpayments::utils::receiving::{calculate_tweak_data, get_pubkey_from_input};
 use sp_client::spclient::{OutputSpendStatus, OwnedOutput};
-use tokio::time::Instant;
+use tokio::time::{sleep, Instant};
 
 use crate::blindbit::client::BlindbitClient;
 use crate::{DAEMON, WALLET};
@@ -252,7 +253,21 @@ pub async fn scan_blocks(mut n_blocks_to_scan: u32, blindbit_url: &str) -> anyho
     let start_time = Instant::now();
 
     for (blkheight, blkhash, blkfilter) in filters {
-        let tweaks = blindbit_client.tweak_index(blkheight).await?;
+        let tweaks: Vec<PublicKey>;
+        loop {
+            match blindbit_client.tweak_index(blkheight).await {
+                Ok(res) => {
+                    tweaks = res;
+                    break;
+                },
+                Err(e) => {
+                    // Log or print the error and attempt number, if needed
+                    println!("Attempt failed: {}. Retrying...", e);
+                }
+            }
+            sleep(Duration::from_secs(1)).await;
+        }
+
 
         let spk2secret = if tweaks.len() > 0 {
             get_script_to_secret_map(&sp_receiver, tweaks, scan_sk.into(), &secp)?
