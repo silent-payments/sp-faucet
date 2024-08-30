@@ -79,7 +79,9 @@ impl BlindbitClient {
             .get(format!("{}/tweak-index/{}", self.host, block_height))
             .send()
             .await?;
-        Ok(serde_json::from_str(&res.text().await?)?)
+        let response = res.error_for_status()?;
+        log::debug!("response: {:?}", response);
+        Ok(serde_json::from_str(&response.text().await?)?)
     }
 
     pub async fn utxos(&self, block_height: u32) -> Result<Vec<UtxoResponse>> {
