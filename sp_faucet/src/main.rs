@@ -19,6 +19,7 @@ use futures_util::{future, pin_mut, stream::TryStreamExt, FutureExt, StreamExt};
 use log::{debug, error, warn};
 use message::{broadcast_message, process_message, AddressCache, BroadcastType, ADDRESSCACHE};
 use scan::compute_partial_tweak_to_transaction;
+use serde_json::json;
 use sp_client::bitcoin::{consensus::deserialize, Amount, Network, Transaction};
 use sp_client::{
     bitcoin::secp256k1::rand::{thread_rng, Rng},
@@ -180,7 +181,10 @@ async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
                     }
                 }
                 Err(e) => {
-                    if let Err(e) = broadcast_message(e.to_string(), BroadcastType::Sender(addr)) {
+                    let response = json!({
+                        "error": e.to_string()
+                    });
+                    if let Err(e) = broadcast_message(response.to_string(), BroadcastType::Sender(addr)) {
                         log::error!("{}", e.to_string());
                     }
                 }
