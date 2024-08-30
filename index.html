@@ -65,7 +65,25 @@
 
         ws.addEventListener('message', (event) => {
             console.log('Received message from server:', event.data);
-            // Handle the response from the server here
+            let response;
+            try {
+                response = JSON.parse(event.data);
+            } catch (e) {
+                console.error('Unparsable server response:', e);
+                alert("Server error: Failed to parse server response");
+                return;
+            }
+
+            if (response.transaction && response.txid) {
+                console.log('New transaction:' + JSON.stringify(response));
+                alert("Successfully sent transaction: " + response.txid);
+            } else if (response.error) {
+                console.error(response)
+                alert("Error: " + response.error);
+            } else {
+                console.error(response);
+                alert("Server error: invalid response" + response);
+            }
         });
 
         ws.addEventListener('close', (event) => {
@@ -100,6 +118,9 @@
             // Clear the error message
             errorMessage.innerText = '';
             errorMessage.style.display = 'none';
+
+            addressInput.value = '';
+            amountInput.value = '';
         });
     </script>
 </body>
