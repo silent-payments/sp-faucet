@@ -107,7 +107,7 @@ async fn faucet_send(sp_address: SilentPaymentAddress, amount: Amount) -> Result
         for (outpoint, output) in available_outpoints {
             total_amt += output.amount;
             inputs.insert(outpoint, output);
-            if total_amt >= amount {
+            if total_amt >= expected_reserve {
                 break;
             }
         }
@@ -134,12 +134,13 @@ async fn faucet_send(sp_address: SilentPaymentAddress, amount: Amount) -> Result
 
         let freezed_utxos = lock_freezed_utxos()?;
 
+        let mandatory_inputs: Vec<&OutPoint> = inputs.keys().collect();
+
         let signed_psbt = create_transaction(
-            &vec![],
+            &mandatory_inputs,
             &freezed_utxos,
             &wallet,
             vec![recipient],
-            None,
             fee_estimate,
             Some(wallet.get_client().sp_receiver.get_change_address())
         )?;

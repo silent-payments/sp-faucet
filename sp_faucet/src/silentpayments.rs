@@ -19,7 +19,6 @@ pub fn create_transaction(
     freezed_utxos: &HashSet<OutPoint>,
     sp_wallet: &SpWallet,
     mut recipients: Vec<Recipient>,
-    payload: Option<Vec<u8>>,
     fee_rate: Amount,
     fee_payer: Option<String>, // None means sender pays everything
 ) -> Result<Psbt> {
@@ -30,15 +29,6 @@ pub fn create_transaction(
         .into_iter()
         .filter(|(outpoint, _)| !freezed_utxos.contains(outpoint))
         .collect();
-
-    // if we have a payload, it means we are notifying, so let's add a revokation output
-    if payload.is_some() {
-        recipients.push(Recipient {
-            address: sp_wallet.get_client().get_receiving_address(),
-            amount: DUST_THRESHOLD,
-            nb_outputs: 1,
-        })
-    }
 
     let sum_outputs = recipients
         .iter()
@@ -75,17 +65,10 @@ pub fn create_transaction(
         recipient.amount = total_available;
     }
 
-    let mut commitment = [0u8; 32];
-    if let Some(ref p) = payload {
-        commitment.copy_from_slice(&p);
-    } else {
-        thread_rng().fill(&mut commitment);
-    }
-
     let mut new_psbt =
         sp_wallet
             .get_client()
-            .create_new_psbt(inputs, recipients, Some(&commitment))?;
+            .create_new_psbt(inputs, recipients, None)?;
 
     let sender_address = sp_wallet.get_client().get_receiving_address();
     let change_address = sp_wallet.get_client().sp_receiver.get_change_address();
