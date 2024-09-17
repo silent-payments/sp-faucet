@@ -171,21 +171,26 @@ async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
     let broadcast_incoming = incoming.try_for_each(|msg| async move {
         if let Ok(raw_msg) = msg.to_text() {
             debug!("Received msg: {}", raw_msg);
-            match process_message(raw_msg).await {
-                Ok(result) => {
-                    if let Err(e) = broadcast_message(
-                        serde_json::to_string(&result).unwrap(),
-                        BroadcastType::Sender(addr),
-                    ) {
-                        log::error!("{}", e.to_string());
+            // ignore ping messages
+            if raw_msg != "PING" {
+                match process_message(raw_msg).await {
+                    Ok(result) => {
+                        if let Err(e) = broadcast_message(
+                            serde_json::to_string(&result).unwrap(),
+                            BroadcastType::Sender(addr),
+                        ) {
+                            log::error!("{}", e.to_string());
+                        }
                     }
-                }
-                Err(e) => {
-                    let response = json!({
-                        "error": e.to_string()
-                    });
-                    if let Err(e) = broadcast_message(response.to_string(), BroadcastType::Sender(addr)) {
-                        log::error!("{}", e.to_string());
+                    Err(e) => {
+                        let response = json!({
+                            "error": e.to_string()
+                        });
+                        if let Err(e) =
+                            broadcast_message(response.to_string(), BroadcastType::Sender(addr))
+                        {
+                            log::error!("{}", e.to_string());
+                        }
                     }
                 }
             }
